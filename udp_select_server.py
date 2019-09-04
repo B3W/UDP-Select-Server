@@ -25,20 +25,29 @@ for concurrent connections
 '''
 import select
 import socket
+import threading
 
 _BIND_IP = ''  # Bind to all interfaces
 _RECV_BUF_SIZE = 1024  # Max size of received data in bytes
-_SELECT_TIMEOUT = 5.0  # Timeout (in sec.) for select to return control
-done = False
 
 
 def kill_server():
-    global done
-    done = True
+    global thread
+    global kill_send_sock
+
+    kill_send_sock.send(b'1')
+    kill_send_sock.close()
+
+    thread.join()
 
 
-def __mainloop(server, inputs, outputs):
+def __mainloop(server, kill_sock):
+    done = False
     opt_value = 1  # Set the socket options
+
+    # Lists containing sockets for 'select' to operate on
+    inputs = [server, kill_sock]   # Sockets to read
+    outputs = []  # Sockets to write
 
     # Dict of message queues for data to send {socket:(data,addr)}
     msg_queues = {}
@@ -48,8 +57,7 @@ def __mainloop(server, inputs, outputs):
         # Multiplex with select
         readable, writable, exceptional = select.select(inputs,
                                                         outputs,
-                                                        inputs,
-                                                        _SELECT_TIMEOUT)
+                                                        inputs)
 
         # Socket has data to read
         for s in readable:
@@ -69,6 +77,11 @@ def __mainloop(server, inputs, outputs):
 
                 # Add item to message queue
                 msg_queues[sock] = (data, addr)
+
+            elif s is kill_sock:
+                # Mainloop will finish writable and exceptional lists then exit
+                done = True
+                s.recv(_RECV_BUF_SIZE)  # Clear dummy data
 
         # Socket has data to write
         for s in writable:
@@ -92,7 +105,7 @@ def __mainloop(server, inputs, outputs):
 
         # Socket experienced exceptional condition
         for s in exceptional:
-            # Remove socket from input/output channel
+            # Remove socket from input/output channels
             try:
                 inputs.remove(s)
             except ValueError:
@@ -111,24 +124,42 @@ def __mainloop(server, inputs, outputs):
             except KeyError:
                 pass
 
+    # Cleanup sockets
+    for s in inputs:
+        s.close()
+
+    for s in outputs:
+        s.close()
+
 
 def start(port):
+    global thread
+    global kill_send_sock
+
     server_addr = (_BIND_IP, port)  # Address to listen at
     opt_value = 1  # Set the socket options
+
+    # Dummy sockets for interrupting select call without a timeout
+    kill_send_sock, kill_recv_sock = socket.socketpair(family=socket.AF_INET,
+                                                       type=socket.SOCK_STREAM)
+    kill_send_sock.setsockopt(socket.SOL_SOCKET,
+                              socket.SO_REUSEADDR,
+                              opt_value)
+
+    kill_recv_sock.setsockopt(socket.SOL_SOCKET,
+                              socket.SO_REUSEADDR,
+                              opt_value)
+
+    kill_recv_sock.setblocking(False)
 
     # Initialize server socket with appropriate options
     server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, opt_value)
+    server.setblocking(False)
 
     # Bind to listen to appropriate address
     server.bind(server_addr)
 
-    # Lists containing sockets for 'select' to operate on
-    inputs = [server]   # Sockets to read
-    outputs = []        # Sockets to write
-
-    __mainloop(server, inputs, outputs)
-
-    server.close()
-
-    print('\nServer Closed')
+    thread = threading.Thread(target=__mainloop,
+                              args=(server, kill_recv_sock))
+    thread.start()

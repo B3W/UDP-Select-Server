@@ -23,14 +23,19 @@
 Testing module
 '''
 import signal
+from time import sleep
 import udp_select_server
 
 _ACCESS_PORT = 10001
+done = False
 
 
 def sigint_handler(signum, stack_frame):
+    global done
+
     if signum == signal.SIGINT:
         udp_select_server.kill_server()
+        done = True
 
 
 if __name__ == '__main__':
@@ -39,6 +44,12 @@ if __name__ == '__main__':
 
     try:
         udp_select_server.start(_ACCESS_PORT)
+
+        while not done:
+            sleep(1.0)
+
     finally:
         # Restore original sigint handler
         signal.signal(signal.SIGINT, signal.default_int_handler)
+
+    print('\nServer Closed')
