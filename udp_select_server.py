@@ -129,4 +129,6 @@ def start(port):
 
     __mainloop(server, inputs, outputs)
 
+    server.close()
+
     print('\nServer Closed')
