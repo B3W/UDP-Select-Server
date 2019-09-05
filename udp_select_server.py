@@ -27,18 +27,15 @@ import select
 import socket
 import threading
 
-_BIND_IP = ''  # Bind to all interfaces
-_RECV_BUF_SIZE = 1024  # Max size of received data in bytes
+_g_BIND_IP = ''  # Bind to all interfaces
+_g_RECV_BUF_SIZE = 1024  # Max size of received data in bytes
 
 
 def kill_server():
-    global thread
-    global kill_send_sock
+    _g_kill_send_sock.send(b'1')
+    _g_kill_send_sock.close()
 
-    kill_send_sock.send(b'1')
-    kill_send_sock.close()
-
-    thread.join()
+    _g_thread.join()
 
 
 def __mainloop(server, kill_sock):
@@ -63,7 +60,7 @@ def __mainloop(server, kill_sock):
         for s in readable:
             if s is server:
                 # Data is ready to be read from UDP server socket
-                data, addr = s.recvfrom(_RECV_BUF_SIZE)
+                data, addr = s.recvfrom(_g_RECV_BUF_SIZE)
                 print('Received: \'%s\' from: \'%s\'' % (data, addr[0]))
 
                 # Create socket for sending data
@@ -81,7 +78,7 @@ def __mainloop(server, kill_sock):
             elif s is kill_sock:
                 # Mainloop will finish writable and exceptional lists then exit
                 done = True
-                s.recv(_RECV_BUF_SIZE)  # Clear dummy data
+                s.recv(_g_RECV_BUF_SIZE)  # Clear dummy data
 
         # Socket has data to write
         for s in writable:
@@ -133,18 +130,19 @@ def __mainloop(server, kill_sock):
 
 
 def start(port):
-    global thread
-    global kill_send_sock
+    global _g_thread
+    global _g_kill_send_sock
 
-    server_addr = (_BIND_IP, port)  # Address to listen at
+    server_addr = (_g_BIND_IP, port)  # Address to listen at
     opt_value = 1  # Set the socket options
 
     # Dummy sockets for interrupting select call without a timeout
-    kill_send_sock, kill_recv_sock = socket.socketpair(family=socket.AF_INET,
-                                                       type=socket.SOCK_STREAM)
-    kill_send_sock.setsockopt(socket.SOL_SOCKET,
-                              socket.SO_REUSEADDR,
-                              opt_value)
+    _g_kill_send_sock, kill_recv_sock \
+        = socket.socketpair(family=socket.AF_INET, type=socket.SOCK_STREAM)
+
+    _g_kill_send_sock.setsockopt(socket.SOL_SOCKET,
+                                 socket.SO_REUSEADDR,
+                                 opt_value)
 
     kill_recv_sock.setsockopt(socket.SOL_SOCKET,
                               socket.SO_REUSEADDR,
@@ -160,6 +158,6 @@ def start(port):
     # Bind to listen to appropriate address
     server.bind(server_addr)
 
-    thread = threading.Thread(target=__mainloop,
-                              args=(server, kill_recv_sock))
-    thread.start()
+    _g_thread = threading.Thread(target=__mainloop,
+                                 args=(server, kill_recv_sock))
+    _g_thread.start()
